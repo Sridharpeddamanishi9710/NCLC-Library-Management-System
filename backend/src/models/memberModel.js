@@ -1,8 +1,8 @@
-const { getDb } = require('./db');
+const { getPool } = require('./db');
 
 class MemberModel {
-  static get db() {
-    return getDb();
+  static get pool() {
+    return getPool();
   }
 
   /**
@@ -11,7 +11,7 @@ class MemberModel {
    * @param {string} [filters.search]
    * @param {string} [filters.status]
    */
-  static findAll({ search, status } = {}) {
+  static async findAll({ search, status } = {}) {
     let sql = `
       SELECT m.*,
         (SELECT COUNT(*) FROM loans l WHERE l.member_id = m.id AND l.status = 'ISSUED') as active_loans_count
@@ -33,21 +33,23 @@ class MemberModel {
 
     sql += ` ORDER BY m.name ASC`;
 
-    return this.db.prepare(sql).all(...params);
+    const [rows] = await this.pool.query(sql, params);
+    return rows;
   }
 
   /**
    * Retrieves a single member by ID, including their active loans count.
    * @param {number} id
    */
-  static findById(id) {
+  static async findById(id) {
     const sql = `
       SELECT m.*,
         (SELECT COUNT(*) FROM loans l WHERE l.member_id = m.id AND l.status = 'ISSUED') as active_loans_count
       FROM members m
       WHERE m.id = ?
     `;
-    return this.db.prepare(sql).get(id) || null;
+    const [rows] = await this.pool.query(sql, [id]);
+    return rows[0] || null;
   }
 
   /**
@@ -55,13 +57,13 @@ class MemberModel {
    * @param {string} code
    * @param {number} [excludeId]
    */
-  static findByCode(code, excludeId = null) {
+  static async findByCode(code, excludeId = null) {
     if (excludeId) {
-      return this.db
-        .prepare('SELECT * FROM members WHERE member_code = ? AND id != ?')
-        .get(code, excludeId) || null;
+      const [rows] = await this.pool.query('SELECT * FROM members WHERE member_code = ? AND id != ?', [code, excludeId]);
+      return rows[0] || null;
     }
-    return this.db.prepare('SELECT * FROM members WHERE member_code = ?').get(code) || null;
+    const [rows] = await this.pool.query('SELECT * FROM members WHERE member_code = ?', [code]);
+    return rows[0] || null;
   }
 
   /**
@@ -69,66 +71,65 @@ class MemberModel {
    * @param {string} email
    * @param {number} [excludeId]
    */
-  static findByEmail(email, excludeId = null) {
+  static async findByEmail(email, excludeId = null) {
     const normalized = email.trim().toLowerCase();
     if (excludeId) {
-      return this.db
-        .prepare('SELECT * FROM members WHERE LOWER(email) = ? AND id != ?')
-        .get(normalized, excludeId) || null;
+      const [rows] = await this.pool.query('SELECT * FROM members WHERE LOWER(email) = ? AND id != ?', [normalized, excludeId]);
+      return rows[0] || null;
     }
-    return this.db.prepare('SELECT * FROM members WHERE LOWER(email) = ?').get(normalized) || null;
+    const [rows] = await this.pool.query('SELECT * FROM members WHERE LOWER(email) = ?', [normalized]);
+    return rows[0] || null;
   }
 
   /**
    * Counts active loans for a member.
    * @param {number} id
    */
-  static getActiveLoansCount(id) {
-    const row = this.db
-      .prepare("SELECT COUNT(*) as count FROM loans WHERE member_id = ? AND status = 'ISSUED'")
-      .get(id);
-    return row ? row.count : 0;
+  static async getActiveLoansCount(id) {
+    const [rows] = await this.pool.query(
+      "SELECT COUNT(*) as count FROM loans WHERE member_id = ? AND status = 'ISSUED'",
+      [id]
+    );
+    return rows[0] ? Number(rows[0].count) : 0;
   }
 
   /**
    * Counts total loans for a member.
    * @param {number} id
    */
-  static getTotalLoansCount(id) {
-    const row = this.db
-      .prepare('SELECT COUNT(*) as count FROM loans WHERE member_id = ?')
-      .get(id);
-    return row ? row.count : 0;
+  static async getTotalLoansCount(id) {
+    const [rows] = await this.pool.query('SELECT COUNT(*) as count FROM loans WHERE member_id = ?', [id]);
+    return rows[0] ? Number(rows[0].count) : 0;
   }
 
   /**
    * Creates a new member.
    */
-  static create({ member_code, name, email, phone, status, max_borrow_limit }) {
-    const stmt = this.db.prepare(`
+  static async create({ member_code, name, email, phone, status, max_borrow_limit }) {
+    const sql = `
       INSERT INTO members (
         member_code, name, email, phone, status, max_borrow_limit
       ) VALUES (
         ?, ?, ?, ?, ?, ?
       )
-    `);
+    `;
 
-    const result = stmt.run(
+    const [result] = await this.pool.query(sql, [
       member_code.trim(),
       name.trim(),
       email.trim().toLowerCase(),
       phone ? phone.trim() : null,
       status ? status.trim().toUpperCase() : 'ACTIVE',
-      max_borrow_limit !== undefined ? max_borrow_limit : 3
-    );
+      max_borrow_limit !== undefined ? max_borrow_limit : 3,
+    ]);
 
-    return this.findById(result.lastInsertRowid);
+    return this.findById(result.insertId);
   }
 
   /**
    * Updates an existing member.
    */
-  static update(id, updates) {
+  static async update(id, updates) {
     const fields = [];
     const values = [];
 
@@ -149,11 +150,9 @@ class MemberModel {
       return this.findById(id);
     }
 
-    fields.push("updated_at = datetime('now')");
     values.push(id);
-
     const sql = `UPDATE members SET ${fields.join(', ')} WHERE id = ?`;
-    this.db.prepare(sql).run(...values);
+    await this.pool.query(sql, values);
 
     return this.findById(id);
   }
@@ -162,25 +161,30 @@ class MemberModel {
    * Deactivates a member by changing status to 'INACTIVE'.
    * @param {number} id
    */
-  static deactivate(id) {
-    this.db
-      .prepare("UPDATE members SET status = 'INACTIVE', updated_at = datetime('now') WHERE id = ?")
-      .run(id);
+  static async deactivate(id) {
+    await this.pool.query("UPDATE members SET status = 'INACTIVE' WHERE id = ?", [id]);
     return this.findById(id);
   }
 
   /**
-   * Deletes a member and their historical non-active loans within a transaction.
+   * Deletes a member and their historical non-active loans within an explicit MySQL transaction.
    * Assumes active loans have already been checked to be 0.
    * @param {number} id
    */
-  static delete(id) {
-    const tx = this.db.transaction(() => {
-      this.db.prepare("DELETE FROM loans WHERE member_id = ? AND status != 'ISSUED'").run(id);
-      return this.db.prepare('DELETE FROM members WHERE id = ?').run(id);
-    });
-
-    return tx();
+  static async delete(id) {
+    const conn = await this.pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query("DELETE FROM loans WHERE member_id = ? AND status != 'ISSUED'", [id]);
+      const [result] = await conn.query('DELETE FROM members WHERE id = ?', [id]);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   }
 }
 

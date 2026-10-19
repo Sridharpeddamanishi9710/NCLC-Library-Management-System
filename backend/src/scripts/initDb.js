@@ -1,35 +1,34 @@
-const { getDb, initSchema, closeDb } = require('../models/db');
+const { getPool, initSchema, testConnection, closePool } = require('../models/db');
 const config = require('../config');
 
-function run() {
-  console.log(`[InitDB] Initializing database at: ${config.dbPath}`);
-  const db = getDb();
-  initSchema(db);
+async function run() {
+  console.log(`[InitDB] Connecting to MySQL at: ${config.db.host}:${config.db.port}/${config.db.database}`);
+  const pool = getPool();
 
-  const fkCheck = db.pragma('foreign_keys', { simple: true });
-  console.log(`[InitDB] SQLite Foreign Keys Enabled: ${fkCheck === 1}`);
+  try {
+    await testConnection(pool);
+    console.log('[InitDB] Connected successfully to MySQL.');
 
-  const tables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
-    .all();
-  console.log('[InitDB] Created Tables:', tables.map((t) => t.name).join(', '));
+    await initSchema(pool);
+    console.log('[InitDB] Schema created/verified successfully.');
 
-  const indexes = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
-    .all();
-  console.log('[InitDB] Created Indexes:', indexes.map((i) => i.name).join(', '));
+    const [tables] = await pool.query('SHOW TABLES');
+    const tableNames = tables.map((t) => Object.values(t)[0]);
+    console.log('[InitDB] Verified Tables in Database:', tableNames.join(', '));
+  } finally {
+    await closePool();
+  }
 
-  closeDb();
-  console.log('[InitDB] Database initialization completed successfully.');
+  console.log('[InitDB] Database initialization completed.');
 }
 
 if (require.main === module) {
-  try {
-    run();
-  } catch (err) {
-    console.error('[InitDB] Error initializing database:', err);
-    process.exit(1);
-  }
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('[InitDB] Initialization failed:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = { run };

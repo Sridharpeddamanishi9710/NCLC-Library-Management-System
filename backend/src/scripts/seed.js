@@ -1,4 +1,4 @@
-const { getDb, initSchema, closeDb } = require('../models/db');
+const { getPool, initSchema, closePool } = require('../models/db');
 const config = require('../config');
 
 const sampleBooks = [
@@ -120,68 +120,77 @@ const sampleMembers = [
 ];
 
 /**
- * Seeds books and members safely using INSERT OR IGNORE.
- * Rerunning this function will never delete or overwrite existing records.
+ * Seeds books and members safely into MySQL without overwriting or deleting data.
+ * @param {import('mysql2/promise').Pool} [targetPool]
  */
-function seed(targetDb) {
-  const db = targetDb || getDb();
-  initSchema(db);
+async function seed(targetPool) {
+  const pool = targetPool || getPool();
+  await initSchema(pool);
 
-  console.log('[Seed] Seeding sample data (safe & repeatable)...');
-
-  const insertBook = db.prepare(`
-    INSERT OR IGNORE INTO books (
-      isbn, title, author, genre, total_copies, available_copies, shelf_location
-    ) VALUES (
-      @isbn, @title, @author, @genre, @total_copies, @available_copies, @shelf_location
-    )
-  `);
-
-  const insertMember = db.prepare(`
-    INSERT OR IGNORE INTO members (
-      member_code, name, email, phone, status, max_borrow_limit
-    ) VALUES (
-      @member_code, @name, @email, @phone, @status, @max_borrow_limit
-    )
-  `);
+  console.log('[Seed] Seeding sample data into MySQL (safe & repeatable)...');
 
   let booksAdded = 0;
   let membersAdded = 0;
 
-  const transaction = db.transaction(() => {
-    for (const book of sampleBooks) {
-      const result = insertBook.run(book);
-      if (result.changes > 0) booksAdded++;
-    }
-
-    for (const member of sampleMembers) {
-      const result = insertMember.run(member);
-      if (result.changes > 0) membersAdded++;
-    }
-  });
-
-  transaction();
-
-  const totalBooks = db.prepare('SELECT COUNT(*) as count FROM books').get().count;
-  const totalMembers = db.prepare('SELECT COUNT(*) as count FROM members').get().count;
-
-  console.log(`[Seed] Books added: ${booksAdded} (Total books in DB: ${totalBooks})`);
-  console.log(`[Seed] Members added: ${membersAdded} (Total members in DB: ${totalMembers})`);
-
-  if (!targetDb) {
-    closeDb();
+  for (const book of sampleBooks) {
+    const [res] = await pool.query(
+      `INSERT IGNORE INTO books (
+        isbn, title, author, genre, total_copies, available_copies, shelf_location
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?
+      )`,
+      [
+        book.isbn,
+        book.title,
+        book.author,
+        book.genre,
+        book.total_copies,
+        book.available_copies,
+        book.shelf_location,
+      ]
+    );
+    if (res.affectedRows > 0) booksAdded++;
   }
 
-  return { booksAdded, membersAdded, totalBooks, totalMembers };
+  for (const member of sampleMembers) {
+    const [res] = await pool.query(
+      `INSERT IGNORE INTO members (
+        member_code, name, email, phone, status, max_borrow_limit
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?
+      )`,
+      [
+        member.member_code,
+        member.name,
+        member.email,
+        member.phone,
+        member.status,
+        member.max_borrow_limit,
+      ]
+    );
+    if (res.affectedRows > 0) membersAdded++;
+  }
+
+  const [[totalB]] = await pool.query('SELECT COUNT(*) as c FROM books');
+  const [[totalM]] = await pool.query('SELECT COUNT(*) as c FROM members');
+
+  console.log(`[Seed] Books added: ${booksAdded} (Total books in DB: ${totalB.c})`);
+  console.log(`[Seed] Members added: ${membersAdded} (Total members in DB: ${totalM.c})`);
+
+  if (!targetPool) {
+    await closePool();
+  }
+
+  return { booksAdded, membersAdded, totalBooks: Number(totalB.c), totalMembers: Number(totalM.c) };
 }
 
 if (require.main === module) {
-  try {
-    seed();
-  } catch (err) {
-    console.error('[Seed] Error seeding database:', err);
-    process.exit(1);
-  }
+  seed()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('[Seed] Error seeding database:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = { seed, sampleBooks, sampleMembers };

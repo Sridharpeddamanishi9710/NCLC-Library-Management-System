@@ -1,18 +1,18 @@
 const MemberModel = require('../models/memberModel');
 
 /**
- * Controller for Member management operations.
+ * Controller for Member management operations with async MySQL support.
  */
 class MemberController {
   /**
    * GET /api/members
    * List members with search and status filtering.
    */
-  static getAllMembers(req, res, next) {
+  static async getAllMembers(req, res, next) {
     try {
       const { search, status } = req.query;
 
-      const members = MemberModel.findAll({ search, status });
+      const members = await MemberModel.findAll({ search, status });
 
       res.json({
         success: true,
@@ -28,10 +28,10 @@ class MemberController {
    * GET /api/members/:id
    * Retrieve a member by ID.
    */
-  static getMemberById(req, res, next) {
+  static async getMemberById(req, res, next) {
     try {
       const id = req.validatedId;
-      const member = MemberModel.findById(id);
+      const member = await MemberModel.findById(id);
 
       if (!member) {
         return res.status(404).json({
@@ -53,12 +53,12 @@ class MemberController {
    * POST /api/members
    * Register a new library member.
    */
-  static createMember(req, res, next) {
+  static async createMember(req, res, next) {
     try {
       const { member_code, name, email, phone, status, max_borrow_limit } = req.body;
 
       // Duplicate code check
-      const codeExists = MemberModel.findByCode(member_code);
+      const codeExists = await MemberModel.findByCode(member_code);
       if (codeExists) {
         return res.status(409).json({
           success: false,
@@ -67,7 +67,7 @@ class MemberController {
       }
 
       // Duplicate email check
-      const emailExists = MemberModel.findByEmail(email);
+      const emailExists = await MemberModel.findByEmail(email);
       if (emailExists) {
         return res.status(409).json({
           success: false,
@@ -77,7 +77,7 @@ class MemberController {
 
       const limit = max_borrow_limit !== undefined ? Number(max_borrow_limit) : 3;
 
-      const newMember = MemberModel.create({
+      const newMember = await MemberModel.create({
         member_code,
         name,
         email,
@@ -100,10 +100,10 @@ class MemberController {
    * PUT /api/members/:id
    * Update an existing member.
    */
-  static updateMember(req, res, next) {
+  static async updateMember(req, res, next) {
     try {
       const id = req.validatedId;
-      const existing = MemberModel.findById(id);
+      const existing = await MemberModel.findById(id);
 
       if (!existing) {
         return res.status(404).json({
@@ -116,7 +116,7 @@ class MemberController {
       const updates = {};
 
       if (member_code !== undefined) {
-        const duplicate = MemberModel.findByCode(member_code, id);
+        const duplicate = await MemberModel.findByCode(member_code, id);
         if (duplicate) {
           return res.status(409).json({
             success: false,
@@ -127,7 +127,7 @@ class MemberController {
       }
 
       if (email !== undefined) {
-        const duplicate = MemberModel.findByEmail(email, id);
+        const duplicate = await MemberModel.findByEmail(email, id);
         if (duplicate) {
           return res.status(409).json({
             success: false,
@@ -142,7 +142,7 @@ class MemberController {
       if (status !== undefined) updates.status = status.toUpperCase();
       if (max_borrow_limit !== undefined) updates.max_borrow_limit = Number(max_borrow_limit);
 
-      const updated = MemberModel.update(id, updates);
+      const updated = await MemberModel.update(id, updates);
 
       res.json({
         success: true,
@@ -158,10 +158,10 @@ class MemberController {
    * DELETE /api/members/:id
    * Deactivates member or deletes if no active loans exist.
    */
-  static deleteMember(req, res, next) {
+  static async deleteMember(req, res, next) {
     try {
       const id = req.validatedId;
-      const existing = MemberModel.findById(id);
+      const existing = await MemberModel.findById(id);
 
       if (!existing) {
         return res.status(404).json({
@@ -170,7 +170,7 @@ class MemberController {
         });
       }
 
-      const activeLoans = MemberModel.getActiveLoansCount(id);
+      const activeLoans = await MemberModel.getActiveLoansCount(id);
       if (activeLoans > 0) {
         return res.status(400).json({
           success: false,
@@ -179,11 +179,11 @@ class MemberController {
       }
 
       const { action } = req.query;
-      const totalLoans = MemberModel.getTotalLoansCount(id);
+      const totalLoans = await MemberModel.getTotalLoansCount(id);
 
       // If explicit deactivation requested or member has past loan history, deactivate safely
       if (action === 'deactivate' || totalLoans > 0) {
-        const deactivated = MemberModel.deactivate(id);
+        const deactivated = await MemberModel.deactivate(id);
         return res.json({
           success: true,
           message: totalLoans > 0
@@ -194,7 +194,7 @@ class MemberController {
       }
 
       // If no past loan history exists at all, delete record completely
-      MemberModel.delete(id);
+      await MemberModel.delete(id);
 
       res.json({
         success: true,

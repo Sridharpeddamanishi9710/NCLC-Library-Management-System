@@ -1,18 +1,18 @@
 const BookModel = require('../models/bookModel');
 
 /**
- * Controller for Book management operations.
+ * Controller for Book management operations with async MySQL support.
  */
 class BookController {
   /**
    * GET /api/books
    * List books with search and filter capabilities.
    */
-  static getAllBooks(req, res, next) {
+  static async getAllBooks(req, res, next) {
     try {
       const { search, genre, availableOnly } = req.query;
 
-      const books = BookModel.findAll({
+      const books = await BookModel.findAll({
         search,
         genre,
         availableOnly: availableOnly === 'true' || availableOnly === true,
@@ -32,10 +32,10 @@ class BookController {
    * GET /api/books/:id
    * Retrieve a book by its numeric ID.
    */
-  static getBookById(req, res, next) {
+  static async getBookById(req, res, next) {
     try {
       const id = req.validatedId;
-      const book = BookModel.findById(id);
+      const book = await BookModel.findById(id);
 
       if (!book) {
         return res.status(404).json({
@@ -57,12 +57,12 @@ class BookController {
    * POST /api/books
    * Creates a new book record.
    */
-  static createBook(req, res, next) {
+  static async createBook(req, res, next) {
     try {
       const { isbn, title, author, genre, total_copies, available_copies, shelf_location } = req.body;
 
       // Check for duplicate ISBN
-      const existing = BookModel.findByIsbn(isbn);
+      const existing = await BookModel.findByIsbn(isbn);
       if (existing) {
         return res.status(409).json({
           success: false,
@@ -73,7 +73,7 @@ class BookController {
       const total = Number(total_copies);
       const available = available_copies !== undefined ? Number(available_copies) : total;
 
-      const newBook = BookModel.create({
+      const newBook = await BookModel.create({
         isbn,
         title,
         author,
@@ -97,10 +97,10 @@ class BookController {
    * PUT /api/books/:id
    * Updates an existing book.
    */
-  static updateBook(req, res, next) {
+  static async updateBook(req, res, next) {
     try {
       const id = req.validatedId;
-      const existing = BookModel.findById(id);
+      const existing = await BookModel.findById(id);
 
       if (!existing) {
         return res.status(404).json({
@@ -113,7 +113,7 @@ class BookController {
       const updates = {};
 
       if (isbn !== undefined) {
-        const duplicate = BookModel.findByIsbn(isbn, id);
+        const duplicate = await BookModel.findByIsbn(isbn, id);
         if (duplicate) {
           return res.status(409).json({
             success: false,
@@ -140,7 +140,6 @@ class BookController {
         }
         updates.total_copies = newTotal;
 
-        // If available copies was not explicitly provided, adjust it based on borrowed copies
         if (available_copies === undefined) {
           updates.available_copies = newTotal - currentlyBorrowed;
         }
@@ -159,7 +158,7 @@ class BookController {
         updates.available_copies = newAvailable;
       }
 
-      const updated = BookModel.update(id, updates);
+      const updated = await BookModel.update(id, updates);
 
       res.json({
         success: true,
@@ -175,10 +174,10 @@ class BookController {
    * DELETE /api/books/:id
    * Removes a book if no active loans exist.
    */
-  static deleteBook(req, res, next) {
+  static async deleteBook(req, res, next) {
     try {
       const id = req.validatedId;
-      const existing = BookModel.findById(id);
+      const existing = await BookModel.findById(id);
 
       if (!existing) {
         return res.status(404).json({
@@ -187,7 +186,7 @@ class BookController {
         });
       }
 
-      const activeLoans = BookModel.getActiveLoansCount(id);
+      const activeLoans = await BookModel.getActiveLoansCount(id);
       if (activeLoans > 0) {
         return res.status(400).json({
           success: false,
@@ -195,7 +194,7 @@ class BookController {
         });
       }
 
-      BookModel.delete(id);
+      await BookModel.delete(id);
 
       res.json({
         success: true,

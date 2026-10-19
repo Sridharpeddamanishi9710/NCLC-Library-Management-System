@@ -1,23 +1,22 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
 const request = require('supertest');
-const { initSchema, setDb, closeDb } = require('../src/models/db');
+const { setupTestDatabase, resetTestDatabase, teardownTestDatabase } = require('./testHelper');
 const app = require('../src/app');
 
-describe('Milestone 2 - Books API (/api/books)', () => {
-  let testDb;
+describe('Milestone 2 - Books API (/api/books) [MySQL]', () => {
+  let pool;
 
-  beforeEach(() => {
-    testDb = new Database(':memory:');
-    testDb.pragma('foreign_keys = ON');
-    initSchema(testDb);
-    setDb(testDb);
+  before(async () => {
+    pool = await setupTestDatabase();
   });
 
-  afterEach(() => {
-    closeDb();
-    setDb(null);
+  beforeEach(async () => {
+    await resetTestDatabase();
+  });
+
+  after(async () => {
+    await teardownTestDatabase();
   });
 
   it('GET /api/books should return empty array when no books exist', async () => {
@@ -44,7 +43,7 @@ describe('Milestone 2 - Books API (/api/books)', () => {
     assert.equal(res.body.data.isbn, payload.isbn);
     assert.equal(res.body.data.title, payload.title);
     assert.equal(res.body.data.total_copies, 5);
-    assert.equal(res.body.data.available_copies, 5); // Defaults to total_copies
+    assert.equal(res.body.data.available_copies, 5);
     assert.equal(res.body.data.shelf_location, 'CS-101');
   });
 
@@ -213,7 +212,6 @@ describe('Milestone 2 - Books API (/api/books)', () => {
 
     const id = createRes.body.data.id;
 
-    // Trying to reduce total_copies to 2 when 3 are currently borrowed
     const res = await request(app).put(`/api/books/${id}`).send({
       total_copies: 2,
     });
@@ -223,7 +221,6 @@ describe('Milestone 2 - Books API (/api/books)', () => {
   });
 
   it('DELETE /api/books/:id should prevent deletion when active loans exist', async () => {
-    // 1. Create a book
     const bookRes = await request(app).post('/api/books').send({
       isbn: '978-7777777777',
       title: 'Active Loan Book',
@@ -232,25 +229,20 @@ describe('Milestone 2 - Books API (/api/books)', () => {
     });
     const bookId = bookRes.body.data.id;
 
-    // 2. Create a member
-    const memberStmt = testDb.prepare(`
-      INSERT INTO members (member_code, name, email)
-      VALUES ('MEM-TEST', 'Test Member', 'test@example.com')
-    `);
-    const memberId = memberStmt.run().lastInsertRowid;
+    const [memberResult] = await pool.query(
+      `INSERT INTO members (member_code, name, email) VALUES ('MEM-TEST', 'Test Member', 'test@example.com')`
+    );
+    const memberId = memberResult.insertId;
 
-    // 3. Create an active loan directly
-    testDb.prepare(`
-      INSERT INTO loans (book_id, member_id, due_date, status)
-      VALUES (?, ?, '2026-11-01', 'ISSUED')
-    `).run(bookId, memberId);
+    await pool.query(
+      `INSERT INTO loans (book_id, member_id, issue_date, due_date, status) VALUES (?, ?, '2026-10-19', '2026-11-02', 'ISSUED')`,
+      [bookId, memberId]
+    );
 
-    // 4. Attempting to delete the book should fail with 400
     const delRes = await request(app).delete(`/api/books/${bookId}`);
     assert.equal(delRes.status, 400);
     assert.match(delRes.body.error, /active loans/i);
 
-    // Book should still exist in database
     const checkBook = await request(app).get(`/api/books/${bookId}`);
     assert.equal(checkBook.status, 200);
   });

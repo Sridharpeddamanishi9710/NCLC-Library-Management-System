@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const config = require('./config');
-const { getDb } = require('./models/db');
+const { getPool } = require('./models/db');
 const bookRoutes = require('./routes/bookRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const loanRoutes = require('./routes/loanRoutes');
@@ -14,25 +14,26 @@ app.use(cors());
 app.use(express.json());
 
 // API Health Check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   try {
-    const db = getDb();
-    const bookCount = db.prepare('SELECT COUNT(*) as count FROM books').get().count;
-    const memberCount = db.prepare('SELECT COUNT(*) as count FROM members').get().count;
-    const loanCount = db.prepare('SELECT COUNT(*) as count FROM loans').get().count;
-    const fkStatus = db.pragma('foreign_keys', { simple: true });
+    const pool = getPool();
+    const [[bookRow]] = await pool.query('SELECT COUNT(*) as count FROM books');
+    const [[memberRow]] = await pool.query('SELECT COUNT(*) as count FROM members');
+    const [[loanRow]] = await pool.query('SELECT COUNT(*) as count FROM loans');
 
     res.json({
       status: 'UP',
       service: 'NCLC Library Management System Backend',
       environment: config.env,
       database: {
-        path: config.dbPath,
-        foreignKeysEnabled: fkStatus === 1,
+        engine: 'MySQL',
+        host: config.db.host,
+        port: config.db.port,
+        database: config.db.database,
         counts: {
-          books: bookCount,
-          members: memberCount,
-          loans: loanCount,
+          books: Number(bookRow.count),
+          members: Number(memberRow.count),
+          loans: Number(loanRow.count),
         },
       },
       rules: config.rules,
@@ -45,7 +46,8 @@ app.get('/api/health', (req, res) => {
 // Root Information Route
 app.get('/', (req, res) => {
   res.json({
-    message: 'NCLC Library Management System API (Milestone 3)',
+    message: 'NCLC Library Management System API (MySQL)',
+    databaseEngine: 'MySQL',
     endpoints: {
       health: '/api/health',
       books: '/api/books',

@@ -1,87 +1,86 @@
+const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
 const config = require('../config');
 
-let dbInstance = null;
+let poolInstance = null;
 
 /**
- * Gets or creates the SQLite database connection.
- * @param {string} [customPath] Optional path for testing or alternative database.
- * @returns {import('better-sqlite3').Database}
+ * Returns or creates the singleton MySQL connection pool.
+ * @param {Object} [customConfig]
+ * @returns {import('mysql2/promise').Pool}
  */
-function getDb(customPath) {
-  if (dbInstance && !customPath) {
-    return dbInstance;
+function getPool(customConfig) {
+  if (poolInstance && !customConfig) {
+    return poolInstance;
   }
 
-  const dbFilePath = customPath || config.dbPath;
+  const poolOptions = customConfig || config.db;
+  const pool = mysql.createPool(poolOptions);
 
-  if (dbFilePath !== ':memory:') {
-    const dbDir = path.dirname(dbFilePath);
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
+  if (!customConfig) {
+    poolInstance = pool;
   }
 
-  const db = new Database(dbFilePath);
-
-  // Enable foreign key constraints and WAL mode for optimal performance and concurrency
-  db.pragma('foreign_keys = ON');
-  if (dbFilePath !== ':memory:') {
-    db.pragma('journal_mode = WAL');
-  }
-
-  if (!customPath) {
-    dbInstance = db;
-  }
-
-  return db;
+  return pool;
 }
 
 /**
- * Closes the active database connection.
+ * Overrides the active connection pool (for isolated tests).
+ * @param {import('mysql2/promise').Pool|null} pool
  */
-function closeDb() {
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
+function setPool(pool) {
+  poolInstance = pool;
+}
+
+/**
+ * Closes the active connection pool.
+ */
+async function closePool() {
+  if (poolInstance) {
+    await poolInstance.end();
+    poolInstance = null;
   }
 }
 
 /**
- * Executes the SQL schema to initialize tables and indexes.
- * @param {import('better-sqlite3').Database} [targetDb]
+ * Tests database connectivity.
+ * @param {import('mysql2/promise').Pool} [targetPool]
  */
-function initSchema(targetDb) {
-  const db = targetDb || getDb();
-  const schemaPath = path.resolve(__dirname, 'schema.sql');
+async function testConnection(targetPool) {
+  const pool = targetPool || getPool();
+  const [rows] = await pool.query('SELECT 1 + 1 AS result');
+  return rows[0].result === 2;
+}
+
+/**
+ * Initializes the MySQL schema tables and indexes.
+ * @param {import('mysql2/promise').Pool} [targetPool]
+ */
+async function initSchema(targetPool) {
+  const pool = targetPool || getPool();
+  const schemaPath = path.resolve(__dirname, 'schema.mysql.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-  db.exec(schemaSql);
 
-  // Safe idempotent migration check for existing databases
-  const tableCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='loans'").get();
-  if (tableCheck) {
-    const cols = db.prepare("PRAGMA table_info(loans)").all().map((c) => c.name);
-    if (!cols.includes('paid_amount')) {
-      db.exec("ALTER TABLE loans ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0.0");
-    }
+  // Strip line and block comments, then split by semicolons
+  const cleanSql = schemaSql
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const statements = cleanSql
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  for (const statement of statements) {
+    await pool.query(statement);
   }
-}
-
-
-/**
- * Overrides the active database instance (useful for test isolation).
- * @param {import('better-sqlite3').Database|null} db
- */
-function setDb(db) {
-  dbInstance = db;
 }
 
 module.exports = {
-  getDb,
-  setDb,
-  closeDb,
+  getPool,
+  setPool,
+  closePool,
+  testConnection,
   initSchema,
 };
-

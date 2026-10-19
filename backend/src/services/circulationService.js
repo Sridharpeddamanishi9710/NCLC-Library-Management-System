@@ -62,7 +62,7 @@ class CirculationService {
 
     let effectiveStatus = loan.status;
     let overdueDays = 0;
-    let effectiveFine = loan.fine_amount;
+    let effectiveFine = Number(loan.fine_amount || 0);
 
     if (isReturned) {
       effectiveStatus = 'RETURNED';
@@ -72,7 +72,7 @@ class CirculationService {
       if (overdueDays > 0) {
         effectiveStatus = 'OVERDUE';
         const pendingFine = overdueDays * config.rules.fineRatePerDay;
-        effectiveFine = Math.max(loan.fine_amount, pendingFine);
+        effectiveFine = Math.max(effectiveFine, pendingFine);
       } else {
         effectiveStatus = 'ISSUED';
       }
@@ -102,9 +102,9 @@ class CirculationService {
    * @param {string} [params.issue_date]
    * @param {string} [params.due_date]
    */
-  static issueLoan({ book_id, member_id, issue_date, due_date }) {
+  static async issueLoan({ book_id, member_id, issue_date, due_date }) {
     // 1. Verify Book
-    const book = BookModel.findById(book_id);
+    const book = await BookModel.findById(book_id);
     if (!book) {
       const err = new Error('Book not found.');
       err.status = 404;
@@ -118,7 +118,7 @@ class CirculationService {
     }
 
     // 2. Verify Member
-    const member = MemberModel.findById(member_id);
+    const member = await MemberModel.findById(member_id);
     if (!member) {
       const err = new Error('Member not found.');
       err.status = 404;
@@ -134,7 +134,7 @@ class CirculationService {
     }
 
     // 3. Enforce Borrow Limits (Member limit and Config limit)
-    const activeLoansCount = LoanModel.countActiveLoansByMember(member_id);
+    const activeLoansCount = await LoanModel.countActiveLoansByMember(member_id);
     const maxAllowed = Math.min(
       Number(member.max_borrow_limit || 3),
       Number(config.rules.maxActiveLoansPerMember || 3)
@@ -153,7 +153,7 @@ class CirculationService {
     const finalDueDate = due_date || this.addDays(finalIssueDate, config.rules.loanDurationDays);
 
     // 5. Execute atomic issue
-    const newLoan = LoanModel.issueLoanAtomic({
+    const newLoan = await LoanModel.issueLoanAtomic({
       book_id,
       member_id,
       issue_date: finalIssueDate,
@@ -168,8 +168,8 @@ class CirculationService {
    * @param {number} loanId
    * @param {string} [returnDateInput]
    */
-  static returnLoan(loanId, returnDateInput) {
-    const rawLoan = LoanModel.findRawById(loanId);
+  static async returnLoan(loanId, returnDateInput) {
+    const rawLoan = await LoanModel.findRawById(loanId);
     if (!rawLoan) {
       const err = new Error('Loan record not found.');
       err.status = 404;
@@ -185,9 +185,9 @@ class CirculationService {
     const finalReturnDate = returnDateInput || this.formatDate();
     const overdueDays = this.calculateOverdueDays(rawLoan.due_date, finalReturnDate);
     const fineAmount = overdueDays * config.rules.fineRatePerDay;
-    const isFinePaid = fineAmount === 0 ? 1 : rawLoan.paid_amount >= fineAmount ? 1 : 0;
+    const isFinePaid = fineAmount === 0 ? 1 : Number(rawLoan.paid_amount || 0) >= fineAmount ? 1 : 0;
 
-    const updatedLoan = LoanModel.returnLoanAtomic({
+    const updatedLoan = await LoanModel.returnLoanAtomic({
       loan_id: loanId,
       book_id: rawLoan.book_id,
       return_date: finalReturnDate,
@@ -203,8 +203,8 @@ class CirculationService {
    * @param {number} loanId
    * @param {number} paymentAmount
    */
-  static payFine(loanId, paymentAmount) {
-    const rawLoan = LoanModel.findById(loanId);
+  static async payFine(loanId, paymentAmount) {
+    const rawLoan = await LoanModel.findById(loanId);
     if (!rawLoan) {
       const err = new Error('Loan record not found.');
       err.status = 404;
@@ -244,7 +244,7 @@ class CirculationService {
     const newPaidAmount = enriched.paid_amount + amount;
     const finePaid = newPaidAmount >= enriched.fine_amount ? 1 : 0;
 
-    const updated = LoanModel.recordPayment(loanId, newPaidAmount, finePaid);
+    const updated = await LoanModel.recordPayment(loanId, newPaidAmount, finePaid);
     return this.enrichLoan(updated);
   }
 }

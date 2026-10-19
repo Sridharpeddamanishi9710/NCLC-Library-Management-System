@@ -4,9 +4,10 @@ A robust, full-stack Library Management System built for the NCLC internship pro
 
 ## Tech Stack
 - **Backend**: Node.js, Express.js
-- **Database**: SQLite (via `better-sqlite3` with foreign-key enforcement & WAL mode)
+- **Database**: MySQL 8.0+ (via `mysql2/promise` with connection pooling, transactions, and row-level locking)
+- **Data Migration**: Automated migration script preserving SQLite data and primary keys
 - **Frontend**: React, Vite
-- **Testing**: Node.js Native Test Runner (`node:test`, `node:assert`) with `supertest`
+- **Testing**: Node.js Native Test Runner (`node:test`, `node:assert`) with `supertest`, strictly isolated to dedicated MySQL test database (`library_management_test`)
 
 ---
 
@@ -22,18 +23,18 @@ A robust, full-stack Library Management System built for the NCLC internship pro
 ```text
 NCLC-Library-Management-System/
 ├── backend/
-│   ├── data/                 # SQLite database storage (excluded from git)
+│   ├── data/                 # Legacy SQLite databases (library.db & backup, preserved read-only)
 │   ├── src/
 │   │   ├── config/           # Environment config & library business constants
-│   │   ├── controllers/      # BookController, MemberController
+│   │   ├── controllers/      # BookController, MemberController, LoanController
 │   │   ├── middlewares/      # Input validation & centralized error handling
-│   │   ├── models/           # SQLite connection (db.js), BookModel, MemberModel, schema.sql
-│   │   ├── routes/           # bookRoutes.js, memberRoutes.js
-│   │   ├── scripts/          # initDb.js and repeatable seed.js
+│   │   ├── models/           # MySQL pool (db.js), BookModel, MemberModel, LoanModel, schema.mysql.sql
+│   │   ├── routes/           # bookRoutes.js, memberRoutes.js, loanRoutes.js
+│   │   ├── scripts/          # initDb.js, migrateFromSqlite.js, and repeatable seed.js
 │   │   ├── services/         # Circulation & domain business logic
 │   │   ├── app.js            # Express app configuration & middleware pipeline
-│   │   └── server.js         # HTTP server entry point
-│   ├── tests/                # Automated database, API, and constraint test suites
+│   │   └── server.js         # HTTP server entry point with MySQL health check
+│   ├── tests/                # Automated database, API, and constraint test suites (isolated test DB)
 │   ├── .env.example          # Template environment file
 │   └── package.json
 ├── frontend/
@@ -56,6 +57,7 @@ NCLC-Library-Management-System/
 ### Prerequisites
 - [Node.js](https://nodejs.org/) (v20+ or v24+)
 - npm (v10+ or v11+)
+- [MySQL Server 8.0+](https://dev.mysql.com/downloads/mysql/) running locally (default: `127.0.0.1:3306`)
 
 ---
 
@@ -78,23 +80,48 @@ NCLC-Library-Management-System/
    ```
    *(On Windows PowerShell: `Copy-Item .env.example .env`)*
 
-4. **Initialize Database & Tables**:
+   Update `.env` with your MySQL root password:
+   ```env
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_USER=root
+   DB_PASSWORD=your_actual_mysql_password
+   DB_NAME=library_management
+   DB_NAME_TEST=library_management_test
+   ```
+
+4. **Initialize Database Schema**:
+   Ensure the database exists (e.g. created via MySQL Workbench or CLI: `CREATE DATABASE library_management;`).
+   Then create all tables, constraints, foreign keys, and indexes:
    ```bash
    npm run db:init
    ```
-   This creates `backend/data/library.db` with the `books`, `members`, and `loans` tables, indexes, and enables foreign keys.
 
-5. **Load Sample Seed Data**:
-   ```bash
-   npm run db:seed
-   ```
-   *Note: The seed script is completely safe and repeatable (`INSERT OR IGNORE`). Rerunning it will never delete or duplicate existing records.*
+5. **Data Population Options**:
+   - **Option A: Migrate from Existing SQLite Database**:
+     Safely migrate all books, members, and loans from `backend/data/library.db`:
+     ```bash
+     npm run db:migrate
+     ```
+     *Note: The migration script is transactional, preserves IDs, aligns `AUTO_INCREMENT`, and is idempotent.*
+
+   - **Option B: Seed Fresh Sample Data**:
+     Insert default sample catalog and members:
+     ```bash
+     npm run db:seed
+     ```
+     *Note: The seed script uses `INSERT IGNORE` and is completely safe and repeatable.*
 
 6. **Run Automated Tests**:
+   Create the isolated test database once:
+   ```sql
+   CREATE DATABASE IF NOT EXISTS library_management_test;
+   ```
+   Then run the full automated test suite:
    ```bash
    npm test
    ```
-   *(Runs all test suites against isolated in-memory databases)*
+   *(Runs all test suites sequentially against `library_management_test` without altering production/dev data)*
 
 7. **Start Backend Server**:
    ```bash
@@ -361,9 +388,9 @@ cd backend
 npm test
 ```
 
-### Test Suites Included (41 Tests):
+### Test Suites Included (42 Tests):
 1. `tests/milestone1.test.js`: Schema structure, foreign key enforcement, copy CHECK constraints, safe idempotency of seed data.
 2. `tests/milestone2_books.test.js`: Books CRUD, search, genre filter, availableOnly filter, validation, duplicate ISBN, copy adjustment constraints, deletion restrictions on active loans.
 3. `tests/milestone2_members.test.js`: Members CRUD, search, status filter, email validation, duplicate code/email, loan counts, deletion restrictions, and safe deactivation.
-4. `tests/milestone3_loans.test.js`: Atomic loan issue, copy decrement, limit checking, suspended member protection, return processing, overdue calculation, ₹10/day fine formula, duplicate return prevention, overdue query, partial/full fine payments, overpayment rejection.
+4. `tests/milestone3_loans.test.js`: Atomic loan issue, copy decrement, limit checking, suspended member protection, concurrent `FOR UPDATE` lock protection, return processing, overdue calculation, ₹10/day fine formula, duplicate return prevention, overdue query, partial/full fine payments, overpayment rejection.
 

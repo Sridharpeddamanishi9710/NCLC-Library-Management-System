@@ -1,23 +1,22 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
 const request = require('supertest');
-const { initSchema, setDb, closeDb } = require('../src/models/db');
+const { setupTestDatabase, resetTestDatabase, teardownTestDatabase } = require('./testHelper');
 const app = require('../src/app');
 
-describe('Milestone 2 - Members API (/api/members)', () => {
-  let testDb;
+describe('Milestone 2 - Members API (/api/members) [MySQL]', () => {
+  let pool;
 
-  beforeEach(() => {
-    testDb = new Database(':memory:');
-    testDb.pragma('foreign_keys = ON');
-    initSchema(testDb);
-    setDb(testDb);
+  before(async () => {
+    pool = await setupTestDatabase();
   });
 
-  afterEach(() => {
-    closeDb();
-    setDb(null);
+  beforeEach(async () => {
+    await resetTestDatabase();
+  });
+
+  after(async () => {
+    await teardownTestDatabase();
   });
 
   it('GET /api/members should return empty array when no members exist', async () => {
@@ -42,8 +41,8 @@ describe('Milestone 2 - Members API (/api/members)', () => {
     assert.equal(res.body.data.member_code, 'MEM-001');
     assert.equal(res.body.data.name, 'Priya Sharma');
     assert.equal(res.body.data.email, 'priya.sharma@example.com');
-    assert.equal(res.body.data.status, 'ACTIVE'); // Default
-    assert.equal(res.body.data.max_borrow_limit, 3); // Default
+    assert.equal(res.body.data.status, 'ACTIVE');
+    assert.equal(res.body.data.max_borrow_limit, 3);
   });
 
   it('POST /api/members should reject invalid inputs with 400', async () => {
@@ -68,7 +67,7 @@ describe('Milestone 2 - Members API (/api/members)', () => {
       member_code: 'MEM-003',
       name: 'Bad Status',
       email: 'status@example.com',
-      status: 'BANNED', // Not in ('ACTIVE', 'SUSPENDED', 'INACTIVE')
+      status: 'BANNED',
     });
     assert.equal(resInvalidStatus.status, 400);
   });
@@ -175,12 +174,10 @@ describe('Milestone 2 - Members API (/api/members)', () => {
   });
 
   it('DELETE /api/members/:id should prevent deletion or deactivation when active loans exist', async () => {
-    // 1. Create a book and member
-    const bookStmt = testDb.prepare(`
-      INSERT INTO books (isbn, title, author, total_copies, available_copies)
-      VALUES ('ISBN-MEMBER-TEST', 'Title', 'Author', 2, 1)
-    `);
-    const bookId = bookStmt.run().lastInsertRowid;
+    const [bookResult] = await pool.query(
+      `INSERT INTO books (isbn, title, author, total_copies, available_copies) VALUES ('ISBN-MEMBER-TEST', 'Title', 'Author', 2, 1)`
+    );
+    const bookId = bookResult.insertId;
 
     const memberRes = await request(app).post('/api/members').send({
       member_code: 'MEM-ACTIVE-LOAN',
@@ -189,18 +186,15 @@ describe('Milestone 2 - Members API (/api/members)', () => {
     });
     const memberId = memberRes.body.data.id;
 
-    // 2. Issue an active loan
-    testDb.prepare(`
-      INSERT INTO loans (book_id, member_id, due_date, status)
-      VALUES (?, ?, '2026-11-01', 'ISSUED')
-    `).run(bookId, memberId);
+    await pool.query(
+      `INSERT INTO loans (book_id, member_id, issue_date, due_date, status) VALUES (?, ?, '2026-10-19', '2026-11-02', 'ISSUED')`,
+      [bookId, memberId]
+    );
 
-    // 3. Delete should fail with 400
     const delRes = await request(app).delete(`/api/members/${memberId}`);
     assert.equal(delRes.status, 400);
     assert.match(delRes.body.error, /active loans/i);
 
-    // Member should still be intact
     const checkMember = await request(app).get(`/api/members/${memberId}`);
     assert.equal(checkMember.status, 200);
   });
