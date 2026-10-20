@@ -134,6 +134,34 @@ NCLC-Library-Management-System/
 
 ---
 
+### Frontend Setup
+
+1. **Navigate to the frontend directory**:
+   ```bash
+   cd frontend
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Start Frontend Development Server**:
+   ```bash
+   npm run dev
+   ```
+   The library application UI runs at `http://localhost:5173`.
+   By default, it connects to the backend at `http://localhost:5000/api`.
+   You can optionally configure `VITE_API_URL` via `frontend/.env`.
+
+4. **Production Build & Linter**:
+   ```bash
+   npm run build
+   npm run lint
+   ```
+
+---
+
 ## API Documentation (Milestone 2)
 
 All API responses return consistent JSON formats with appropriate HTTP status codes.
